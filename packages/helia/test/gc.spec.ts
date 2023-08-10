@@ -1,18 +1,19 @@
 /* eslint-env mocha */
+
+import { noise } from '@chainsafe/libp2p-noise'
+import { yamux } from '@chainsafe/libp2p-yamux'
+import * as dagCbor from '@ipld/dag-cbor'
+import * as dagJson from '@ipld/dag-json'
+import * as dagPb from '@ipld/dag-pb'
+import { webSockets } from '@libp2p/websockets'
 import { expect } from 'aegir/chai'
 import { MemoryBlockstore } from 'blockstore-core'
 import { MemoryDatastore } from 'datastore-core'
 import { createLibp2p } from 'libp2p'
-import { webSockets } from '@libp2p/websockets'
-import { noise } from '@chainsafe/libp2p-noise'
-import { yamux } from '@chainsafe/libp2p-yamux'
-import { createHelia } from '../src/index.js'
-import type { GcEvents, Helia } from '@helia/interface'
 import * as raw from 'multiformats/codecs/raw'
+import { createHelia } from '../src/index.js'
 import { createAndPutBlock } from './fixtures/create-block.js'
-import * as dagPb from '@ipld/dag-pb'
-import * as dagCbor from '@ipld/dag-cbor'
-import * as dagJson from '@ipld/dag-json'
+import type { GcEvents, Helia } from '@helia/interface'
 
 describe('gc', () => {
   let helia: Helia
@@ -41,7 +42,7 @@ describe('gc', () => {
     }
   })
 
-  it('pins a dag-pb node and does not garbage collect it or it\'s children', async () => {
+  it('pins a dag-pb node and does not garbage collect it or its children', async () => {
     const child1 = await createAndPutBlock(dagPb.code, dagPb.encode({
       Data: Uint8Array.from([0, 1, 2, 3]),
       Links: []
@@ -82,7 +83,7 @@ describe('gc', () => {
     await expect(helia.blockstore.has(doomed)).to.eventually.be.false()
   })
 
-  it('pins a dag-cbor node and does not garbage collect it or it\'s children', async () => {
+  it('pins a dag-cbor node and does not garbage collect it or its children', async () => {
     const child1 = await createAndPutBlock(dagCbor.code, dagCbor.encode({
       foo: 'bar'
     }), helia.blockstore)
@@ -117,7 +118,7 @@ describe('gc', () => {
     await expect(helia.blockstore.has(doomed)).to.eventually.be.false()
   })
 
-  it('pins a dag-json node and does not garbage collect it or it\'s children', async () => {
+  it('pins a dag-json node and does not garbage collect it or its children', async () => {
     const child1 = await createAndPutBlock(dagJson.code, dagJson.encode({
       foo: 'bar'
     }), helia.blockstore)

@@ -1,15 +1,17 @@
-import type { AddOptions, IsPinnedOptions, LsOptions, Pin, Pins, RmOptions } from '@helia/interface/pins'
-import { Datastore, Key } from 'interface-datastore'
-import { CID, Version } from 'multiformats/cid'
 import * as cborg from 'cborg'
+import { type Datastore, Key } from 'interface-datastore'
 import { base36 } from 'multiformats/bases/base36'
-import type { Blockstore } from 'interface-blockstore'
-import PQueue from 'p-queue'
-import type { AbortOptions } from '@libp2p/interfaces'
-import { equals as uint8ArrayEquals } from 'uint8arrays/equals'
+import { CID, type Version } from 'multiformats/cid'
 import defer from 'p-defer'
-import type { DAGWalker } from './index.js'
+import PQueue from 'p-queue'
+import { CustomProgressEvent, type ProgressOptions } from 'progress-events'
+import { equals as uint8ArrayEquals } from 'uint8arrays/equals'
 import { cborWalker, dagPbWalker, jsonWalker, rawWalker } from './utils/dag-walkers.js'
+import type { DAGWalker } from './index.js'
+import type { AddOptions, AddPinEvents, IsPinnedOptions, LsOptions, Pin, Pins, RmOptions } from '@helia/interface/pins'
+import type { GetBlockProgressEvents } from '@helia/interface/src/blocks.js'
+import type { AbortOptions } from '@libp2p/interface'
+import type { Blockstore } from 'interface-blockstore'
 
 const DEFAULT_DAG_WALKERS = [
   rawWalker,
@@ -41,7 +43,7 @@ const DATASTORE_ENCODING = base36
 // const DAG_WALK_MAX_QUEUE_LENGTH = 10
 const DAG_WALK_QUEUE_CONCURRENCY = 1
 
-interface WalkDagOptions extends AbortOptions {
+interface WalkDagOptions extends AbortOptions, ProgressOptions<GetBlockProgressEvents | AddPinEvents> {
   depth: number
 }
 
@@ -85,8 +87,8 @@ export class PinsImpl implements Pins {
     const queue = new PQueue({
       concurrency: DAG_WALK_QUEUE_CONCURRENCY
     })
-    void queue.add(async () => {
-      await this.#walkDag(cid, queue, (pinnedBlock) => {
+    void queue.add(async (): Promise<void> => {
+      await this.#walkDag(cid, queue, (pinnedBlock): void => {
         // do not update pinned block if this block is already pinned by this CID
         if (pinnedBlock.pinnedBy.find(c => uint8ArrayEquals(c, cid.bytes)) != null) {
           return
@@ -103,7 +105,7 @@ export class PinsImpl implements Pins {
     // if a job in the queue errors, throw that error
     const deferred = defer()
 
-    queue.on('error', (err) => {
+    queue.on('error', (err): void => {
       queue.clear()
       deferred.reject(err)
     })
@@ -142,7 +144,7 @@ export class PinsImpl implements Pins {
       throw new Error(`No dag walker found for cid codec ${cid.code}`)
     }
 
-    const block = await this.blockstore.get(cid)
+    const block = await this.blockstore.get(cid, options)
 
     await this.#updatePinnedBlock(cid, withPinnedBlock, options)
 
@@ -160,7 +162,7 @@ export class PinsImpl implements Pins {
   /**
    * Update the pin count for the CID
    */
-  async #updatePinnedBlock (cid: CID, withPinnedBlock: (pinnedBlock: DatastorePinnedBlock) => void, options: AbortOptions): Promise<void> {
+  async #updatePinnedBlock (cid: CID, withPinnedBlock: (pinnedBlock: DatastorePinnedBlock) => void, options: AddOptions): Promise<void> {
     const blockKey = new Key(`${DATASTORE_BLOCK_PREFIX}${DATASTORE_ENCODING.encode(cid.multihash.bytes)}`)
 
     let pinnedBlock: DatastorePinnedBlock = {
@@ -186,6 +188,7 @@ export class PinsImpl implements Pins {
     }
 
     await this.datastore.put(blockKey, cborg.encode(pinnedBlock), options)
+    options.onProgress?.(new CustomProgressEvent<CID>('helia:pin:add', { detail: cid }))
   }
 
   async rm (cid: CID<unknown, number, number, Version>, options: RmOptions = {}): Promise<Pin> {
@@ -199,8 +202,8 @@ export class PinsImpl implements Pins {
     const queue = new PQueue({
       concurrency: DAG_WALK_QUEUE_CONCURRENCY
     })
-    void queue.add(async () => {
-      await this.#walkDag(cid, queue, (pinnedBlock) => {
+    void queue.add(async (): Promise<void> => {
+      await this.#walkDag(cid, queue, (pinnedBlock): void => {
         pinnedBlock.pinCount--
         pinnedBlock.pinnedBy = pinnedBlock.pinnedBy.filter(c => uint8ArrayEquals(c, cid.bytes))
       }, {
@@ -233,6 +236,6 @@ export class PinsImpl implements Pins {
   async isPinned (cid: CID, options: IsPinnedOptions = {}): Promise<boolean> {
     const blockKey = new Key(`${DATASTORE_BLOCK_PREFIX}${DATASTORE_ENCODING.encode(cid.multihash.bytes)}`)
 
-    return await this.datastore.has(blockKey, options)
+    return this.datastore.has(blockKey, options)
   }
 }

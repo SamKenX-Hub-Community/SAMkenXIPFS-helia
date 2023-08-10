@@ -1,4 +1,5 @@
-import type { AbortOptions } from '@libp2p/interfaces'
+import type { GetBlockProgressEvents } from './blocks'
+import type { AbortOptions } from '@libp2p/interface'
 import type { CID } from 'multiformats/cid'
 import type { ProgressEvent, ProgressOptions } from 'progress-events'
 
@@ -11,9 +12,9 @@ export interface Pin {
 }
 
 export type AddPinEvents =
-  ProgressEvent<'helia:pin:add', unknown>
+  ProgressEvent<'helia:pin:add', CID>
 
-export interface AddOptions extends AbortOptions, ProgressOptions<AddPinEvents> {
+export interface AddOptions extends AbortOptions, ProgressOptions<AddPinEvents | GetBlockProgressEvents> {
   /**
    * How deeply to pin the DAG, defaults to Infinity
    */
