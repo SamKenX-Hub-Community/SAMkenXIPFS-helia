@@ -1,23 +1,29 @@
-import type { GCOptions, Helia } from '@helia/interface'
-import type { Libp2p } from '@libp2p/interface-libp2p'
-import type { Datastore } from 'interface-datastore'
-import type { CID } from 'multiformats/cid'
+import { logger } from '@libp2p/logger'
+import { type Bitswap, createBitswap } from 'ipfs-bitswap'
+import drain from 'it-drain'
 import { identity } from 'multiformats/hashes/identity'
 import { sha256, sha512 } from 'multiformats/hashes/sha2'
-import type { MultihashHasher } from 'multiformats/hashes/interface'
-import type { HeliaInit } from '.'
-import { Bitswap, createBitswap } from 'ipfs-bitswap'
-import { BlockStorage } from './storage.js'
-import type { Pins } from '@helia/interface/pins'
-import { PinsImpl } from './pins.js'
-import { assertDatastoreVersionIsCurrent } from './utils/datastore-version.js'
-import drain from 'it-drain'
 import { CustomProgressEvent } from 'progress-events'
-import { MemoryDatastore } from 'datastore-core'
-import { MemoryBlockstore } from 'blockstore-core'
-import { logger } from '@libp2p/logger'
+import { PinsImpl } from './pins.js'
+import { BlockStorage } from './storage.js'
+import { assertDatastoreVersionIsCurrent } from './utils/datastore-version.js'
+import { NetworkedStorage } from './utils/networked-storage.js'
+import type { HeliaInit } from '.'
+import type { GCOptions, Helia } from '@helia/interface'
+import type { Pins } from '@helia/interface/pins'
+import type { Libp2p } from '@libp2p/interface'
+import type { Blockstore } from 'interface-blockstore'
+import type { Datastore } from 'interface-datastore'
+import type { CID } from 'multiformats/cid'
+import type { MultihashHasher } from 'multiformats/hashes/interface'
 
 const log = logger('helia')
+
+interface HeliaImplInit<T extends Libp2p = Libp2p> extends HeliaInit<T> {
+  libp2p: T
+  blockstore: Blockstore
+  datastore: Datastore
+}
 
 export class HeliaImpl implements Helia {
   public libp2p: Libp2p
@@ -27,7 +33,7 @@ export class HeliaImpl implements Helia {
 
   #bitswap?: Bitswap
 
-  constructor (init: HeliaInit) {
+  constructor (init: HeliaImplInit) {
     const hashers: MultihashHasher[] = [
       sha256,
       sha512,
@@ -35,56 +41,33 @@ export class HeliaImpl implements Helia {
       ...(init.hashers ?? [])
     ]
 
-    const datastore = init.datastore ?? new MemoryDatastore()
-    const blockstore = init.blockstore ?? new MemoryBlockstore()
+    this.#bitswap = createBitswap(init.libp2p, init.blockstore, {
+      hashLoader: {
+        getHasher: async (codecOrName: string | number): Promise<MultihashHasher<number>> => {
+          const hasher = hashers.find(hasher => {
+            return hasher.code === codecOrName || hasher.name === codecOrName
+          })
 
-    // @ts-expect-error incomplete libp2p implementation
-    const libp2p = init.libp2p ?? new Proxy<Libp2p>({}, {
-      get (_, prop) {
-        const noop = (): void => {}
-        const noops = ['start', 'stop']
+          if (hasher != null) {
+            return hasher
+          }
 
-        if (noops.includes(prop.toString())) {
-          return noop
+          throw new Error(`Could not load hasher for code/name "${codecOrName}"`)
         }
-
-        if (prop === 'isProxy') {
-          return true
-        }
-
-        throw new Error('Please configure Helia with a libp2p instance')
-      },
-      set () {
-        throw new Error('Please configure Helia with a libp2p instance')
       }
     })
 
-    if (init.libp2p != null) {
-      this.#bitswap = createBitswap(libp2p, blockstore, {
-        hashLoader: {
-          getHasher: async (codecOrName: string | number) => {
-            const hasher = hashers.find(hasher => {
-              return hasher.code === codecOrName || hasher.name === codecOrName
-            })
+    const networkedStorage = new NetworkedStorage(init.blockstore, {
+      bitswap: this.#bitswap
+    })
 
-            if (hasher != null) {
-              return await Promise.resolve(hasher)
-            }
+    this.pins = new PinsImpl(init.datastore, networkedStorage, init.dagWalkers ?? [])
 
-            throw new Error(`Could not load hasher for code/name "${codecOrName}"`)
-          }
-        }
-      })
-    }
-
-    this.pins = new PinsImpl(datastore, blockstore, init.dagWalkers ?? [])
-
-    this.libp2p = libp2p
-    this.blockstore = new BlockStorage(blockstore, this.pins, {
-      bitswap: this.#bitswap,
+    this.libp2p = init.libp2p
+    this.blockstore = new BlockStorage(networkedStorage, this.pins, {
       holdGcLock: init.holdGcLock
     })
-    this.datastore = datastore
+    this.datastore = init.datastore
   }
 
   async start (): Promise<void> {
@@ -108,7 +91,7 @@ export class HeliaImpl implements Helia {
 
       log('gc start')
 
-      await drain(blockstore.deleteMany((async function * () {
+      await drain(blockstore.deleteMany((async function * (): AsyncGenerator<CID> {
         for await (const { cid } of blockstore.getAll()) {
           try {
             if (await helia.pins.isPinned(cid, options)) {

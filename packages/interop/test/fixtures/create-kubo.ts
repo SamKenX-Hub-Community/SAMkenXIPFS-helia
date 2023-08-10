@@ -1,10 +1,11 @@
-// @ts-expect-error no types
+/* eslint-disable @typescript-eslint/ban-ts-comment,@typescript-eslint/prefer-ts-expect-error */
+// @ts-ignore no types - TODO: remove me once the next version of npm-go-ipfs has shipped
 import * as goIpfs from 'go-ipfs'
-import { Controller, createController } from 'ipfsd-ctl'
+import { type Controller, createController } from 'ipfsd-ctl'
 import * as kuboRpcClient from 'kubo-rpc-client'
 
 export async function createKuboNode (): Promise<Controller> {
-  return await createController({
+  return createController({
     kuboRpcModule: kuboRpcClient,
     ipfsBin: goIpfs.path(),
     test: true,

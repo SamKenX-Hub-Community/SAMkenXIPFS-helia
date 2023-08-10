@@ -1,14 +1,14 @@
 /* eslint-env mocha */
 
 import { expect } from 'aegir/chai'
+import toBuffer from 'it-to-buffer'
+import { CID } from 'multiformats/cid'
+import * as raw from 'multiformats/codecs/raw'
+import { sha256 } from 'multiformats/hashes/sha2'
 import { createHeliaNode } from './fixtures/create-helia.js'
 import { createKuboNode } from './fixtures/create-kubo.js'
 import type { Helia } from '@helia/interface'
 import type { Controller } from 'ipfsd-ctl'
-import toBuffer from 'it-to-buffer'
-import { sha256 } from 'multiformats/hashes/sha2'
-import { CID } from 'multiformats/cid'
-import * as raw from 'multiformats/codecs/raw'
 
 describe('blockstore', () => {
   let helia: Helia
@@ -19,7 +19,9 @@ describe('blockstore', () => {
     kubo = await createKuboNode()
 
     // connect the two nodes
-    await helia.libp2p.peerStore.addressBook.add(kubo.peer.id, kubo.peer.addresses)
+    await helia.libp2p.peerStore.merge(kubo.peer.id, {
+      multiaddrs: kubo.peer.addresses
+    })
     await helia.libp2p.dial(kubo.peer.id)
   })
 

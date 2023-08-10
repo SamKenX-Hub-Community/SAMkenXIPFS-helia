@@ -1,42 +1,30 @@
 /* eslint-env mocha */
+
 import { expect } from 'aegir/chai'
-import { MemoryBlockstore } from 'blockstore-core'
-import { MemoryDatastore } from 'datastore-core'
-import { createLibp2p } from 'libp2p'
-import { webSockets } from '@libp2p/websockets'
-import { noise } from '@chainsafe/libp2p-noise'
-import { yamux } from '@chainsafe/libp2p-yamux'
-import { createHelia } from '../src/index.js'
-import type { Helia } from '@helia/interface'
+import all from 'it-all'
 import { CID } from 'multiformats/cid'
 import * as raw from 'multiformats/codecs/raw'
 import { createAndPutBlock } from './fixtures/create-block.js'
-import all from 'it-all'
+import { createHelia } from './fixtures/create-helia.js'
+import type { Helia } from '@helia/interface'
+import type { ProgressEvent } from 'progress-events'
 
 describe('pins', () => {
   let helia: Helia
+  let remote: Helia
 
   beforeEach(async () => {
-    helia = await createHelia({
-      datastore: new MemoryDatastore(),
-      blockstore: new MemoryBlockstore(),
-      libp2p: await createLibp2p({
-        transports: [
-          webSockets()
-        ],
-        connectionEncryption: [
-          noise()
-        ],
-        streamMuxers: [
-          yamux()
-        ]
-      })
-    })
+    helia = await createHelia()
+    remote = await createHelia()
   })
 
   afterEach(async () => {
     if (helia != null) {
       await helia.stop()
+    }
+
+    if (remote != null) {
+      await remote.stop()
     }
   })
 
@@ -48,6 +36,23 @@ describe('pins', () => {
 
     await expect(helia.pins.isPinned(cidV1)).to.eventually.be.true('did not pin v1 CID')
     await expect(helia.pins.isPinned(cidV0)).to.eventually.be.true('did not pin v0 CID')
+  })
+
+  it('pins a block with progress events', async () => {
+    const cidV1 = await createAndPutBlock(raw.code, Uint8Array.from([0, 1, 2, 3]), helia.blockstore)
+
+    const events: ProgressEvent[] = []
+
+    await helia.pins.add(cidV1, {
+      onProgress: (evt) => {
+        events.push(evt)
+      }
+    })
+
+    expect(events.map(e => e.type)).to.include.members([
+      'blocks:get:blockstore:get',
+      'helia:pin:add'
+    ])
   })
 
   it('unpins a block', async () => {
@@ -130,6 +135,21 @@ describe('pins', () => {
     const pins = await all(helia.pins.ls({
       cid: cid1
     }))
+
+    expect(pins).to.have.lengthOf(1)
+    expect(pins).to.have.nested.property('[0].cid').that.eql(cid1)
+    expect(pins).to.have.nested.property('[0].depth', Infinity)
+    expect(pins).to.have.nested.property('[0].metadata').that.eql({})
+  })
+
+  it('pins a block from another node', async () => {
+    await helia.libp2p.dial(remote.libp2p.getMultiaddrs())
+
+    const cid1 = await createAndPutBlock(raw.code, Uint8Array.from([0, 1, 2, 3]), remote.blockstore)
+
+    await helia.pins.add(cid1)
+
+    const pins = await all(helia.pins.ls())
 
     expect(pins).to.have.lengthOf(1)
     expect(pins).to.have.nested.property('[0].cid').that.eql(cid1)
